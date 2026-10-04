@@ -1,6 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter
-from app.models.schemas import ResumeTemplate
+from app.models.schemas import ResumeTemplate, EvaluateResumeRequest, OptimizeResumeRequest
 from app.services.resume_service import ResumeService
 
 router = APIRouter()
@@ -13,12 +13,12 @@ async def get_templates(category: Optional[str] = None):
 
 
 @router.post("/evaluate")
-async def evaluate_resume(resume_content: str, target_job: str):
-    result = await ResumeService.evaluate_resume(resume_content, target_job)
+async def evaluate_resume(request: EvaluateResumeRequest):
+    result = await ResumeService.evaluate_resume(request.resume_content, request.target_job)
     return result
 
 
 @router.post("/optimize")
-async def optimize_resume(resume_content: str, target_job: str):
-    result = await ResumeService.optimize_resume(resume_content, target_job)
+async def optimize_resume(request: OptimizeResumeRequest):
+    result = await ResumeService.optimize_resume(request.resume_content, request.target_job)
     return result

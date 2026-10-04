@@ -1,49 +1,99 @@
 from typing import List
-from app.models.schemas import InterviewQuestion
+from app.models.schemas import InterviewQuestion, AnswerEvaluation
+from app.services.ai_service import chat_completion
+from app.utils.json_parser import parse_json_response
 
 
 class InterviewService:
-    
+
     @classmethod
-    def get_questions(cls, job_category: str = "技术", interview_type: str = "技术面", 
+    def get_questions(cls, job_category: str = "技术", interview_type: str = "技术面",
                      difficulty: str = "中等") -> List[InterviewQuestion]:
         questions = cls._get_question_bank()
-        
+
         filtered = [q for q in questions if q.category == interview_type]
-        
-        if difficulty == "简单":
-            filtered = [q for q in filtered if q.difficulty in ["简单", "中等"]]
-        elif difficulty == "困难":
-            filtered = [q for q in filtered if q.difficulty in ["中等", "困难"]]
-        
+
+        filtered = [q for q in filtered if q.difficulty == difficulty]
+        if interview_type == "技术面" and job_category in ("产品", "数据分析"):
+            subject = "产品需求与优先级" if job_category == "产品" else "数据质量与分析方法"
+            filtered = [InterviewQuestion(
+                question=f"请结合一个项目说明你如何处理{subject}。",
+                category=interview_type, difficulty=difficulty,
+                hints=["项目背景", "采用的方法", "个人贡献", "结果与复盘"],
+                evaluation_criteria=["方法合理性", "岗位知识", "表达清晰度"],
+            )]
+
         return filtered[:10]
-    
+
     @classmethod
-    async def simulate_interview(cls, job_title: str, interview_type: str, user_answer: str = None) -> dict:
+    async def simulate_interview(cls, job_title: str, interview_type: str,
+                                 user_answer: str = None, question_index: int = 0) -> dict:
         questions = cls._get_interview_questions_by_type(interview_type)
-        
-        if not user_answer:
-            return {
-                "status": "started",
-                "interview_type": interview_type,
-                "job_title": job_title,
-                "current_question": questions[0] if questions else "请开始面试",
-                "question_index": 0,
-                "total_questions": len(questions)
-            }
-        
-        evaluation = cls._evaluate_answer(user_answer, questions[0] if questions else "")
-        
-        return {
-            "status": "in_progress",
-            "evaluation": evaluation,
-            "next_question": questions[1] if len(questions) > 1 else "面试结束",
-            "score": evaluation.get("score", 0)
-        }
-    
+        if not 0 <= question_index < len(questions):
+            raise ValueError("题目序号超出范围")
+        if user_answer is None:
+            return {"status": "started", "interview_type": interview_type,
+                    "job_title": job_title, "current_question": questions[question_index],
+                    "question_index": question_index, "total_questions": len(questions)}
+        if not user_answer.strip():
+            raise ValueError("回答不能为空")
+        evaluation = await cls.evaluate_answer(questions[question_index], user_answer, job_title)
+        next_index = question_index + 1
+        finished = next_index >= len(questions)
+        return {"status": "completed" if finished else "in_progress",
+                "evaluation": evaluation, "score": evaluation["score"],
+                "next_question": None if finished else questions[next_index],
+                "question_index": next_index, "total_questions": len(questions),
+                "ai_provider": evaluation["ai_provider"], "is_fallback": evaluation["is_fallback"]}
+
     @classmethod
     async def evaluate_answer(cls, question: str, answer: str, job_title: str) -> dict:
-        return cls._evaluate_answer(answer, question)
+        # 尝试使用AI评估
+        ai_result = await cls._ai_evaluate_answer(answer, question)
+        if ai_result and not ai_result.get("is_fallback", False):
+            result = ai_result.get("evaluation", {})
+            result["ai_provider"] = ai_result.get("provider", "ai")
+            result["is_fallback"] = False
+            return result
+
+        # 降级到规则引擎
+        result = cls._evaluate_answer(answer, question)
+        result["ai_provider"] = "rule_engine"
+        result["is_fallback"] = True
+        return result
+
+    @classmethod
+    async def _ai_evaluate_answer(cls, answer: str, question: str) -> dict:
+        """使用AI评估面试回答，失败时返回None"""
+        prompt = f"""
+请评估以下面试回答：
+
+问题：{question}
+
+回答：{answer}
+
+请从以下维度进行评估并返回JSON格式：
+1. score: 分数(0-100)
+2. feedback: 总体评价(字符串数组)
+3. strengths: 优点(字符串数组)
+4. weaknesses: 不足(字符串数组)
+5. suggestions: 改进建议(字符串数组)
+
+只返回JSON，不要有其他内容。
+"""
+        system_prompt = "你是一个专业的面试评估专家，能够准确评估候选人的回答质量。"
+
+        try:
+            result = await chat_completion(prompt, system_prompt)
+            if result.get("is_fallback"):
+                return result
+
+            # 解析AI返回的JSON
+            evaluation = parse_json_response(result.get("content", ""))
+            result["evaluation"] = AnswerEvaluation.model_validate(evaluation).model_dump()
+            return result
+        except Exception:
+            return None
     
     @classmethod
     def _evaluate_answer(cls, answer: str, question: str) -> dict:

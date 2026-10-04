@@ -1,11 +1,70 @@
 from typing import List
 from app.models.schemas import ActionItem
+from app.services.ai_service import chat_completion
+from app.utils.json_parser import parse_json_response
 
 
 class ActionPlanGenerator:
     
     @classmethod
-    def generate(cls, job_title: str, user_profile: dict) -> List[ActionItem]:
+    async def generate(cls, job_title: str, user_profile: dict) -> List[ActionItem]:
+        # 尝试使用AI生成个性化行动计划
+        ai_result = await cls._ai_generate_plan(job_title, user_profile)
+        if ai_result and not ai_result.get("is_fallback", False):
+            return ai_result.get("plan", [])
+        
+        # 降级到规则引擎模板
+        return cls._generate_from_template(job_title, user_profile)
+    
+    @classmethod
+    async def _ai_generate_plan(cls, job_title: str, user_profile: dict) -> dict:
+        """使用AI生成个性化行动计划"""
+        profile_desc = f"专业: {user_profile.get('major', '未知')}, 年级: {user_profile.get('grade', '未知')}, 技能: {user_profile.get('skills', [])}"
+        
+        prompt = f"""
+请为以下用户生成一个个性化的行动计划：
+目标岗位: {job_title}
+用户背景: {profile_desc}
+
+请返回JSON格式，包含5个阶段，每个阶段有：
+- phase: 阶段名称
+- title: 阶段标题
+- description: 阶段描述
+- tasks: 任务列表(字符串数组)
+- resources: 推荐资源列表(字符串数组)
+
+只返回JSON数组，不要有其他内容。
+"""
+        system_prompt = "你是一个职业规划专家，能够为求职者制定详细的行动计划。"
+        
+        try:
+            result = await chat_completion(prompt, system_prompt)
+            if result.get("is_fallback"):
+                return result
+            
+            plan_data = parse_json_response(result.get("content", ""))
+            if not isinstance(plan_data, list) or not plan_data:
+                return None
+            plan = []
+            for phase_data in plan_data:
+                item = ActionItem(
+                    phase=phase_data.get("phase", ""),
+                    title=phase_data.get("title", ""),
+                    description=phase_data.get("description", ""),
+                    tasks=phase_data.get("tasks", []),
+                    resources=phase_data.get("resources", []),
+                    completed=False
+                )
+                plan.append(item)
+            
+            result["plan"] = plan
+            return result
+        except Exception:
+            return None
+    
+    @classmethod
+    def _generate_from_template(cls, job_title: str, user_profile: dict) -> List[ActionItem]:
+        """使用规则引擎模板生成行动计划"""
         templates = cls._get_plan_templates()
         
         category = cls._detect_category(job_title)
@@ -36,9 +95,7 @@ class ActionPlanGenerator:
     
     @classmethod
     def _detect_category(cls, job_title: str) -> str:
-        if any(kw in job_title for kw in ["前端", "后端", "开发", "工程师", "Python", "Java", "C++"]):
-            return "技术"
-        elif "产品" in job_title:
+        if "产品" in job_title:
             return "产品"
         elif "数据" in job_title:
             return "数据分析"
@@ -46,6 +103,8 @@ class ActionPlanGenerator:
             return "设计"
         elif "运营" in job_title or "市场" in job_title:
             return "运营"
+        elif any(kw in job_title.casefold() for kw in ["前端", "后端", "开发", "工程师", "python", "java", "c++"]):
+            return "技术"
         return "通用"
     
     @classmethod

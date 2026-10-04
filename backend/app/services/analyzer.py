@@ -1,6 +1,10 @@
 from typing import Optional, List, Dict
-from app.models.schemas import JobAnalysis, SkillGap
+import re
+from app.models.schemas import JobAnalysis, SkillGap, ParsedJD
 from app.services.job_service import JobService
+from app.services.ai_service import chat_completion
+from app.utils.json_parser import parse_json_response
+from app.utils.skill_matching import contains_skill
 
 
 class JobAnalyzer:
@@ -21,8 +25,7 @@ class JobAnalyzer:
             "精通": ["精通", "深入", "专家", "架构"]
         }
         
-        hard_skill_words = []
-        soft_skill_words = ["沟通", "协作", "团队", "表达", "领导", "管理", "分析", "思维", "创新"]
+        soft_skill_words = ["沟通", "协作", "团队", "表达", "领导", "管理", "思维", "创新"]
         
         for skill in job.skills:
             is_soft = any(sw in skill for sw in soft_skill_words)
@@ -36,12 +39,13 @@ class JobAnalyzer:
                 for keyword in keywords:
                     if keyword in req:
                         for skill in job.skills:
-                            if skill in req:
-                                skill_levels[skill] = level
+                            if contains_skill(req, skill):
+                                ranks = {"入门": 1, "进阶": 2, "精通": 3}
+                                if ranks[level] > ranks.get(skill_levels.get(skill), 0):
+                                    skill_levels[skill] = level
         
-        if not skill_levels and hard_skills:
-            for skill in hard_skills:
-                skill_levels[skill["name"]] = "进阶"
+        for skill in hard_skills:
+            skill_levels.setdefault(skill["name"], "进阶")
         
         real_work = cls._extract_real_work(job)
         
@@ -65,14 +69,13 @@ class JobAnalyzer:
         if not job:
             return SkillGap()
         
-        user_skill_names = {s.lower() for s in user_skills.get("skills", [])}
-        job_skill_names = {s.lower() for s in job.skills}
+        user_skill_names = {s.strip().casefold() for s in user_skills.get("skills", [])}
         
         matched = []
         missing = []
         
         for skill in job.skills:
-            if skill.lower() in user_skill_names:
+            if skill.strip().casefold() in user_skill_names:
                 matched.append({"skill": skill, "status": "已掌握"})
             else:
                 missing.append({"skill": skill, "priority": "高"})
@@ -96,14 +99,56 @@ class JobAnalyzer:
     
     @classmethod
     async def parse_jd(cls, jd_text: str) -> dict:
+        # 尝试使用AI解析JD
+        ai_result = await cls._ai_parse_jd(jd_text)
+        if ai_result and not ai_result.get("is_fallback", False):
+            result = ai_result.get("parsed", {})
+            result["ai_provider"] = ai_result.get("provider", "ai")
+            result["is_fallback"] = False
+            return result
+        
+        # 降级到规则引擎
         return {
             "summary": "这是一个基于规则引擎的JD解析结果",
             "key_responsibilities": cls._extract_responsibilities(jd_text),
             "required_skills": cls._extract_skills_from_text(jd_text),
             "experience_level": cls._detect_experience_level(jd_text),
             "education_requirement": cls._detect_education(jd_text),
-            "plain_language": cls._translate_to_plain_language(jd_text)
+            "plain_language": cls._translate_to_plain_language(jd_text),
+            "ai_provider": "rule_engine",
+            "is_fallback": True,
         }
+    
+    @classmethod
+    async def _ai_parse_jd(cls, jd_text: str) -> dict:
+        """使用AI解析职位描述"""
+        prompt = f"""
+请分析以下职位描述(JD)并返回JSON格式：
+
+{jd_text}
+
+请返回以下字段：
+- summary: 职位总结(一句话)
+- key_responsibilities: 主要职责(字符串数组)
+- required_skills: 需要的技能(字符串数组)
+- experience_level: 经验要求(字符串)
+- education_requirement: 学历要求(字符串)
+- plain_language: 用通俗语言重述职位内容(字符串)
+
+只返回JSON，不要有其他内容。
+"""
+        system_prompt = "你是一个专业的JD分析专家，能够准确解析职位描述。"
+        
+        try:
+            result = await chat_completion(prompt, system_prompt)
+            if result.get("is_fallback"):
+                return result
+            
+            parsed = parse_json_response(result.get("content", ""))
+            result["parsed"] = ParsedJD.model_validate(parsed).model_dump()
+            return result
+        except Exception:
+            return None
     
     @classmethod
     def _extract_real_work(cls, job) -> List[str]:
@@ -175,19 +220,23 @@ class JobAnalyzer:
         ]
         found = []
         for skill in tech_skills:
-            if skill.lower() in text.lower():
+            if contains_skill(text, skill):
                 found.append(skill)
         return found
     
     @classmethod
     def _detect_experience_level(cls, text: str) -> str:
-        if "应届" in text or "不限" in text or "0" in text:
+        if "应届" in text or "经验不限" in text or "不限经验" in text or "无经验要求" in text:
             return "应届生/无经验要求"
-        elif "1-3" in text or "1年" in text:
-            return "初级（1-3年）"
-        elif "3-5" in text or "3年" in text:
-            return "中级（3-5年）"
-        elif "5" in text:
+        match = re.search(r"(\d+)\s*(?:[-~–至到]\s*\d+)?\s*年", text)
+        if match:
+            years = int(match.group(1))
+            if years == 0:
+                return "应届生/无经验要求"
+            if years < 3:
+                return "初级（1-3年）"
+            if years < 5:
+                return "中级（3-5年）"
             return "高级（5年以上）"
         return "未明确要求"
     

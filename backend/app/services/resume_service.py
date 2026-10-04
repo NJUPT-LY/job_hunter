@@ -1,5 +1,6 @@
 from typing import Optional, List
 from app.models.schemas import ResumeTemplate
+from app.utils.skill_matching import contains_skill
 
 
 class ResumeService:
@@ -69,25 +70,9 @@ class ResumeService:
     
     @classmethod
     def _calculate_resume_score(cls, content: str, target_job: str) -> int:
-        score = 60
-        
-        if len(content) > 200:
-            score += 5
-        if "教育背景" in content:
-            score += 5
-        if "项目" in content or "实习" in content:
-            score += 5
-        if "S" in content and "T" in content and "A" in content and "R" in content:
-            score += 10
-        elif "情境" in content or "任务" in content or "行动" in content or "结果" in content:
-            score += 5
-        
-        job_keywords = ["Python", "Java", "JavaScript", "React", "Vue", "SQL", "数据分析", "产品"]
-        for kw in job_keywords:
-            if kw.lower() in content.lower():
-                score += 2
-        
-        return min(score, 100)
+        scores = [cls._check_completeness(content), cls._check_match(content, target_job),
+                  cls._check_star_method(content), cls._check_keywords(content, target_job)]
+        return round(sum(scores) / len(scores))
     
     @classmethod
     def _check_completeness(cls, content: str) -> int:
@@ -106,15 +91,16 @@ class ResumeService:
         
         for category, skills in job_skills.items():
             if category in target_job:
-                matched = sum(1 for s in skills if s.lower() in content.lower())
+                matched = sum(1 for s in skills if contains_skill(content, s))
                 return int(matched / len(skills) * 100)
         return 50
     
     @classmethod
     def _check_star_method(cls, content: str) -> int:
-        star_indicators = ["Situation", "Task", "Action", "Result", "情境", "任务", "行动", "结果"]
-        count = sum(1 for s in star_indicators if s in content)
-        return min(int(count / 4 * 100), 100)
+        indicators = [("Situation", "情境"), ("Task", "任务"),
+                      ("Action", "行动"), ("Result", "结果")]
+        count = sum(any(contains_skill(content, term) for term in pair) for pair in indicators)
+        return count * 25
     
     @classmethod
     def _check_keywords(cls, content: str, target_job: str) -> int:
@@ -127,7 +113,7 @@ class ResumeService:
         
         for category, keywords in job_keywords_map.items():
             if category in target_job:
-                matched = sum(1 for kw in keywords if kw.lower() in content.lower())
+                matched = sum(1 for kw in keywords if contains_skill(content, kw))
                 return int(matched / len(keywords) * 100)
         return 50
     
@@ -183,10 +169,10 @@ class ResumeService:
         suggestions = []
         
         if "负责" in content:
-            suggestions.append("将'负责XXX'改为'通过XXX实现了XXX，提升了XX%'")
+            suggestions.append("说明负责的具体工作、采用的方法和实际成果，有数据时再补充真实指标")
         
         if "参与" in content:
-            suggestions.append("将'参与XXX'改为具体描述个人贡献，如'在XXX中独立完成XXX模块'")
+            suggestions.append("说明参与项目时实际承担的职责和个人贡献，避免夸大角色")
         
         suggestions.append("在项目描述中加入具体数据支撑")
         suggestions.append("将技能与目标岗位要求对齐")
@@ -195,9 +181,5 @@ class ResumeService:
     
     @classmethod
     def _apply_optimizations(cls, content: str, suggestions: list) -> str:
-        optimized = content
-        
-        optimized = optimized.replace("负责", "主导完成")
-        optimized = optimized.replace("参与", "在团队中负责")
-        
-        return optimized
+        # 规则模式只整理排版；不能把“参与”改为“主导”来编造经历。
+        return "\n".join(line.rstrip() for line in content.strip().splitlines())

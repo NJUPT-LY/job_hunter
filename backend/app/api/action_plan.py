@@ -1,14 +1,14 @@
 from fastapi import APIRouter
 from typing import List
-from app.models.schemas import ActionItem
+from app.models.schemas import ActionItem, ActionPlanRequest
 from app.services.action_generator import ActionPlanGenerator
 
 router = APIRouter()
 
 
 @router.post("/generate", response_model=List[ActionItem])
-async def generate_action_plan(job_title: str, user_profile: dict):
-    plan = ActionPlanGenerator.generate(job_title, user_profile)
+async def generate_action_plan(request: ActionPlanRequest):
+    plan = await ActionPlanGenerator.generate(request.job_title, request.user_profile)
     return plan
 
 

@@ -1,58 +1,88 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Table, Input, Button, Space, Tag, InputNumber, message, Spin, Typography } from 'antd';
+import { useState, useEffect, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Table, AutoComplete, Button, Space, Tag, message, Typography, Empty } from 'antd';
 import { SearchOutlined, ReloadOutlined, EyeOutlined } from '@ant-design/icons';
-import { getJobs, crawlJobs } from '../services/api';
+import { getJobsPage, crawlJobs } from '../services/api';
+import type { Job } from '../types/job';
+import { useWindowSize } from '../hooks';
+import { JobCardSkeleton } from '../components/Skeleton/JobCardSkeleton';
+import { useSearchCacheStore } from '../stores/cacheStore';
 
 const { Title } = Typography;
 
 const JobsPage: React.FC = () => {
   const navigate = useNavigate();
-  const [jobs, setJobs] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const [searchKeyword, setSearchKeyword] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [crawling, setCrawling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { isMobile } = useWindowSize();
+  const { recentKeywords, addKeyword } = useSearchCacheStore();
+  const requestId = useRef(0);
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
     fetchJobs();
-  }, [page]);
+    return () => { requestId.current += 1; };
+  }, [page, searchKeyword, refresh]);
 
   const fetchJobs = async () => {
+    const currentRequest = ++requestId.current;
     setLoading(true);
+    setError(null);
     try {
-      const data = await getJobs(keyword, page, pageSize);
-      setJobs(data);
-      setTotal(100);
-    } catch (error) {
-      message.error('获取职位列表失败');
+      const data = await getJobsPage(searchKeyword, page, pageSize);
+      if (currentRequest !== requestId.current) return;
+      setJobs(data.items);
+      setTotal(data.total);
+    } catch (err: any) {
+      if (currentRequest !== requestId.current) return;
+      const msg = err?.message || '获取职位列表失败';
+      setError(msg);
+      message.error(msg);
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
   };
 
   const handleSearch = () => {
+    if (keyword.trim()) {
+      addKeyword(keyword.trim());
+    }
     setPage(1);
-    fetchJobs();
+    setSearchKeyword(keyword.trim());
+    setRefresh((value) => value + 1);
   };
 
   const handleCrawl = async () => {
-    if (!keyword) {
+    if (!keyword.trim()) {
       message.warning('请先输入搜索关键词');
       return;
     }
     setCrawling(true);
     try {
-      const result = await crawlJobs(keyword);
-      message.success(result.message || '爬取完成');
-      fetchJobs();
-    } catch (error) {
-      message.error('爬取失败');
+      const result = await crawlJobs(keyword.trim());
+      if (result.fetched) message.success(result.message);
+      else message.warning(result.message);
+      addKeyword(keyword.trim());
+      setPage(1);
+      setSearchKeyword(keyword.trim());
+      setRefresh((value) => value + 1);
+    } catch (err: any) {
+      const msg = err?.message || '爬取失败';
+      message.error(msg);
     } finally {
       setCrawling(false);
     }
+  };
+
+  const handleSelectKeyword = (value: string) => {
+    setKeyword(value);
   };
 
   const columns = [
@@ -61,7 +91,7 @@ const JobsPage: React.FC = () => {
       dataIndex: 'title',
       key: 'title',
       render: (text: string, record: any) => (
-        <a onClick={() => navigate(`/jobs/${record.id}`)}>{text}</a>
+        <Link to={`/jobs/${record.id}`}>{text}</Link>
       )
     },
     {
@@ -124,14 +154,15 @@ const JobsPage: React.FC = () => {
     <div>
       <Title level={2}>职位搜索</Title>
       
-      <Space style={{ marginBottom: 24 }} wrap>
-        <Input
+      <Space style={{ marginBottom: 24, width: '100%' }} wrap>
+        <AutoComplete
+          allowClear
           placeholder="搜索关键词，如：前端开发、数据分析..."
           value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          onPressEnter={handleSearch}
-          style={{ width: 300 }}
-          prefix={<SearchOutlined />}
+          onChange={handleSelectKeyword}
+          style={{ width: isMobile ? '100%' : 300, flex: isMobile ? '0 0 100%' : 'none' }}
+          options={recentKeywords.map((k) => ({ label: k, value: k }))}
+          onKeyDown={(event) => { if (event.key === 'Enter') handleSearch(); }}
         />
         <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch} loading={loading}>
           搜索
@@ -145,19 +176,50 @@ const JobsPage: React.FC = () => {
         </Button>
       </Space>
 
-      <Spin spinning={loading}>
+      {loading && jobs.length === 0 ? (
+        <JobCardSkeleton />
+      ) : error && jobs.length === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={
+            <span>
+              加载失败：<span style={{ color: '#ff4d4f' }}>{error}</span>
+              <br />
+              <Button type="link" onClick={() => setRefresh((value) => value + 1)} style={{ marginTop: 8 }}>
+                点击重试
+              </Button>
+            </span>
+          }
+        />
+      ) : jobs.length === 0 && !loading ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={
+            <span>
+              暂无职位数据
+              <br />
+              <span style={{ fontSize: 12, color: '#999' }}>
+                请输入关键词搜索，或点击"爬取新职位"获取最新职位
+              </span>
+            </span>
+          }
+        />
+      ) : (
         <Table
           columns={columns}
           dataSource={jobs}
           rowKey="id"
+          loading={loading}
+          scroll={{ x: 900 }}
           pagination={{
             current: page,
             pageSize: pageSize,
             total: total,
+            showSizeChanger: false,
             onChange: (p) => setPage(p)
           }}
         />
-      </Spin>
+      )}
     </div>
   );
 };

@@ -1,39 +1,37 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Descriptions, Tag, Spin, Button, Divider, Typography, Space, Card } from 'antd';
+import { Descriptions, Tag, Button, Divider, Typography, Space, Card, Alert } from 'antd';
 import { ArrowLeftOutlined, BarChartOutlined } from '@ant-design/icons';
 import { getJob } from '../services/api';
+import { JobDetailSkeleton } from '../components/Skeleton/JobCardSkeleton';
+import type { Job } from '../types/job';
 
 const { Title, Paragraph, Text } = Typography;
 
 const JobDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [job, setJob] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
+  const [job, setJob] = useState<Job | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    if (id) fetchJobDetail();
+    let active = true;
+    setLoading(true);
+    setJob(null);
+    setError('');
+    getJob(id!).then((data) => { if (active) setJob(data); })
+      .catch((err) => { if (active) setError(err.message || '获取职位详情失败'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [id]);
 
-  const fetchJobDetail = async () => {
-    setLoading(true);
-    try {
-      const data = await getJob(id!);
-      setJob(data);
-    } catch (error) {
-      console.error('获取职位详情失败:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   if (loading) {
-    return <Spin size="large" />;
+    return <JobDetailSkeleton />;
   }
 
   if (!job) {
-    return <div>职位不存在</div>;
+    return <Alert type="error" message={error || '职位不存在'} showIcon />;
   }
 
   return (

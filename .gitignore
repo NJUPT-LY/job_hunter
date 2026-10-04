@@ -2,7 +2,9 @@ node_modules/
 dist/
 build/
 .env
-.env.local
+.env.*
+!.env.example
+!.env.*.example
 __pycache__/
 *.pyc
 *.pyo
@@ -13,3 +15,10 @@ venv/
 .idea/
 .vscode/
 *.log
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.tsbuildinfo
+.DS_Store
+Thumbs.db

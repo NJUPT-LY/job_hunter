@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Card, Form, Input, Select, Button, message, Steps, Timeline, Tag, Space, Typography } from 'antd';
+import { Card, Form, Input, Select, Button, message, Steps, Timeline, Tag, Space, Typography, Empty } from 'antd';
 import { CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { generateActionPlan } from '../services/api';
+import { ActionPlanSkeleton } from '../components/Skeleton/JobCardSkeleton';
 
 const { Title, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -17,12 +18,12 @@ const ActionPlanPage: React.FC = () => {
       const result = await generateActionPlan(values.jobTitle, {
         major: values.major,
         grade: values.grade,
-        skills: values.skills?.split(',').map((s: string) => s.trim()) || []
+        skills: values.skills?.split(/[,，]/).map((s: string) => s.trim()).filter(Boolean) || []
       });
       setPlan(result);
       message.success('行动清单生成成功');
-    } catch (error) {
-      message.error('生成失败');
+    } catch (error: any) {
+      message.error(error?.message || '生成失败');
     } finally {
       setLoading(false);
     }
@@ -35,7 +36,7 @@ const ActionPlanPage: React.FC = () => {
 
       <Card title="生成行动清单" style={{ marginBottom: 24 }}>
         <Form form={form} layout="vertical" onFinish={handleGenerate}>
-          <Form.Item name="jobTitle" label="目标岗位" rules={[{ required: true }]}>
+          <Form.Item name="jobTitle" label="目标岗位" rules={[{ required: true, whitespace: true }]}>
             <Input placeholder="例如：前端开发工程师、数据分析师" />
           </Form.Item>
           <Form.Item name="major" label="专业">
@@ -61,7 +62,9 @@ const ActionPlanPage: React.FC = () => {
         </Form>
       </Card>
 
-      {plan.length > 0 && (
+      {loading ? (
+        <ActionPlanSkeleton />
+      ) : plan.length > 0 ? (
         <>
           <Steps
             current={0}
@@ -74,13 +77,17 @@ const ActionPlanPage: React.FC = () => {
               <Title level={4}>{phase.title}</Title>
               <Paragraph>{phase.description}</Paragraph>
               
-              <Timeline>
-                {phase.tasks?.map((task: string, idx: number) => (
-                  <Timeline.Item key={idx} dot={<ClockCircleOutlined style={{ fontSize: '16px' }} />}>
-                    {task}
-                  </Timeline.Item>
-                ))}
-              </Timeline>
+              {phase.tasks && phase.tasks.length > 0 ? (
+                <Timeline>
+                  {phase.tasks.map((task: string, idx: number) => (
+                    <Timeline.Item key={idx} dot={<ClockCircleOutlined style={{ fontSize: '16px' }} />}>
+                      {task}
+                    </Timeline.Item>
+                  ))}
+                </Timeline>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无任务项" />
+              )}
 
               {phase.resources && phase.resources.length > 0 && (
                 <>
@@ -95,6 +102,19 @@ const ActionPlanPage: React.FC = () => {
             </Card>
           ))}
         </>
+      ) : (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={
+            <span>
+              尚未生成行动清单
+              <br />
+              <span style={{ fontSize: 12, color: '#999' }}>
+                填写上方表单并点击"生成行动清单"开始
+              </span>
+            </span>
+          }
+        />
       )}
     </div>
   );

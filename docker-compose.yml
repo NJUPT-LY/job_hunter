@@ -1,0 +1,68 @@
+# ============================================================
+# 职路AI - Docker Compose 编排配置
+# 前后端服务一键部署
+# ============================================================
+
+services:
+  # 后端服务 (Python FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: zhilu-backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - ./backend/.env.production
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=False
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - DATA_DIR=/app/data
+      - LOG_DIR=/app/logs
+    volumes:
+      - zhilu-data:/app/data
+      - zhilu-logs:/app/logs
+    networks:
+      - zhilu-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # 前端服务 (Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: zhilu-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - zhilu-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+# 数据卷
+volumes:
+  zhilu-data:
+    driver: local
+  zhilu-logs:
+    driver: local
+
+# 网络
+networks:
+  zhilu-network:
+    driver: bridge

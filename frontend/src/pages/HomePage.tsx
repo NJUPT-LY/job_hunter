@@ -1,4 +1,7 @@
-import { Card, Row, Col, Typography, Space, Button, Statistic } from 'antd';
+import { useEffect, useState } from 'react';
+import { Card, Row, Col, Typography, Space, Button, Statistic, Alert } from 'antd';
+import { getJobStats } from '../services/api';
+import type { JobStats } from '../types/job';
 import { 
   RocketOutlined, 
   AimOutlined, 
@@ -12,6 +15,14 @@ const { Title, Paragraph, Text } = Typography;
 
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
+  const [stats, setStats] = useState<JobStats | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    getJobStats().then((data) => { if (active) setStats(data); })
+      .catch((err) => { if (active) setError(err.message || '统计数据加载失败'); });
+    return () => { active = false; };
+  }, []);
 
   const features = [
     {
@@ -35,7 +46,7 @@ const HomePage: React.FC = () => {
     {
       icon: <TrophyOutlined style={{ fontSize: 40, color: '#722ed1' }} />,
       title: '简历与面试',
-      description: 'AI简历优化与模拟面试，提升求职竞争力',
+      description: '简历检查与模拟面试，完善求职准备',
       path: '/resume'
     }
   ];
@@ -57,25 +68,26 @@ const HomePage: React.FC = () => {
         </Space>
       </div>
 
+      {error && <Alert type="warning" message={error} style={{ marginBottom: 16 }} />}
       <Row gutter={[24, 24]} style={{ marginBottom: 48 }}>
         <Col xs={24} md={6}>
           <Card>
-            <Statistic title="已收录职位" value={1200} suffix="+" />
+            <Statistic title="已收录职位" value={stats?.total ?? '—'} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
           <Card>
-            <Statistic title="岗位类别" value={50} suffix="+" />
+            <Statistic title="覆盖城市" value={stats?.cities ?? '—'} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
           <Card>
-            <Statistic title="技能标签" value={200} suffix="+" />
+            <Statistic title="技能标签" value={stats?.skills ?? '—'} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
           <Card>
-            <Statistic title="AI分析模型" value={5} suffix="个" />
+            <Statistic title="收录公司" value={stats?.companies ?? '—'} />
           </Card>
         </Col>
       </Row>
@@ -108,8 +120,8 @@ const HomePage: React.FC = () => {
         <Row gutter={[24, 16]} style={{ marginTop: 24 }}>
           <Col xs={24} md={8}>
             <Space direction="vertical">
-              <Text strong>真实数据驱动</Text>
-              <Text type="secondary">不是空泛建议，而是基于真实招聘需求</Text>
+              <Text strong>岗位数据分析</Text>
+              <Text type="secondary">结合职位描述分析要求，示例数据用于功能演示</Text>
             </Space>
           </Col>
           <Col xs={24} md={8}>
